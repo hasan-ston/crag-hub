@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
 import {
   ArrowLeft,
@@ -6,16 +6,21 @@ import {
   Upload,
   Trash2,
   Image as ImageIcon,
-  ChevronDown,
-  ChevronUp,
   Loader2,
   X,
   Eye,
   EyeOff,
+  Pencil,
+  RotateCcw,
 } from "lucide-react";
 import { useAdmin } from "@/hooks/use-admin";
 import { ROUTE_COLORS, GRADES } from "@/lib/constants";
 import { ImageFallback } from "@/components/image-fallback";
+import {
+  getBoundingBoxFromPath,
+  simplifyRoutePath,
+} from "@/lib/route-path";
+import type { Point, RoutePath } from "@/lib/types";
 
 type AdminView = "walls" | "add-wall" | "wall-routes" | "add-route";
 
@@ -30,6 +35,7 @@ interface RouteForm {
   color: string;
   name: string;
   setter: string;
+  path: RoutePath | null;
   region_x: number;
   region_y: number;
   region_w: number;
@@ -42,11 +48,65 @@ const INITIAL_ROUTE: RouteForm = {
   color: "green",
   name: "",
   setter: "",
+  path: null,
   region_x: 10,
   region_y: 10,
   region_w: 20,
   region_h: 30,
 };
+
+function hexToRgba(hex: string, alpha: number) {
+  const normalized = hex.replace("#", "");
+  const safe =
+    normalized.length === 3
+      ? normalized
+          .split("")
+          .map((value) => `${value}${value}`)
+          .join("")
+      : normalized;
+
+  const r = Number.parseInt(safe.slice(0, 2), 16);
+  const g = Number.parseInt(safe.slice(2, 4), 16);
+  const b = Number.parseInt(safe.slice(4, 6), 16);
+
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function drawPolygon(
+  ctx: CanvasRenderingContext2D,
+  path: RoutePath,
+  color: string,
+  width: number,
+  height: number,
+  options?: { closed?: boolean; fillAlpha?: number; lineWidth?: number }
+) {
+  if (path.length === 0) {
+    return;
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(path[0].x * width, path[0].y * height);
+
+  for (let i = 1; i < path.length; i += 1) {
+    ctx.lineTo(path[i].x * width, path[i].y * height);
+  }
+
+  if (options?.closed !== false && path.length >= 3) {
+    ctx.closePath();
+  }
+
+  ctx.strokeStyle = hexToRgba(color, 0.95);
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.lineWidth = options?.lineWidth ?? 2.5;
+
+  if (options?.closed !== false && path.length >= 3) {
+    ctx.fillStyle = hexToRgba(color, options?.fillAlpha ?? 0.26);
+    ctx.fill();
+  }
+
+  ctx.stroke();
+}
 
 export function AdminScreen() {
   const navigate = useNavigate();
@@ -71,9 +131,15 @@ export function AdminScreen() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wallImageRef = useRef<HTMLImageElement>(null);
+  const drawingPointerIdRef = useRef<number | null>(null);
+  const livePathRef = useRef<RoutePath>([]);
 
-  const selectedWall = walls.find((w) => w.id === selectedWallId);
+  const selectedWall = walls.find((wall) => wall.id === selectedWallId);
+  const selectedWallRoutes = routes.filter((route) => route.wall_id === selectedWallId);
 
   useEffect(() => {
     if (selectedWallId) {
@@ -81,14 +147,100 @@ export function AdminScreen() {
     }
   }, [selectedWallId, loadRoutes]);
 
-  const showFeedback = (msg: string) => {
-    setFeedback(msg);
-    setTimeout(() => setFeedback(null), 3000);
-  };
+  const showFeedback = useCallback((message: string) => {
+    setFeedback(message);
+    window.setTimeout(() => setFeedback(null), 3000);
+  }, []);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const drawPreview = useCallback(
+    (activePath?: RoutePath) => {
+      const canvas = canvasRef.current;
+      const image = wallImageRef.current;
+
+      if (!canvas || !image) {
+        return;
+      }
+
+      const rect = image.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        return;
+      }
+
+      const dpr = window.devicePixelRatio || 1;
+      const width = Math.round(rect.width);
+      const height = Math.round(rect.height);
+
+      if (
+        canvas.width !== Math.round(width * dpr) ||
+        canvas.height !== Math.round(height * dpr)
+      ) {
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+      }
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        return;
+      }
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+
+      const previewPath = activePath ?? routeForm.path;
+      if (!previewPath || previewPath.length === 0) {
+        return;
+      }
+
+      drawPolygon(
+        ctx,
+        previewPath,
+        ROUTE_COLORS[routeForm.color] || "#8a8a96",
+        width,
+        height,
+        {
+          closed: !isDrawing && previewPath.length >= 3,
+          fillAlpha: isDrawing ? 0.14 : 0.28,
+          lineWidth: isDrawing ? 2 : 2.5,
+        }
+      );
+    },
+    [isDrawing, routeForm.color, routeForm.path]
+  );
+
+  useEffect(() => {
+    if (view !== "add-route") {
+      return;
+    }
+
+    drawPreview();
+
+    const image = wallImageRef.current;
+    if (!image || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => drawPreview());
+    observer.observe(image);
+
+    return () => observer.disconnect();
+  }, [drawPreview, view]);
+
+  const resetRouteDraft = useCallback(() => {
+    livePathRef.current = [];
+    drawingPointerIdRef.current = null;
+    setIsDrawing(false);
+    setRouteForm(INITIAL_ROUTE);
+    window.requestAnimationFrame(() => drawPreview([]));
+  }, [drawPreview]);
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
     setImageFile(file);
     const reader = new FileReader();
     reader.onloadend = () => setImagePreview(reader.result as string);
@@ -103,7 +255,9 @@ export function AdminScreen() {
 
     setUploading(true);
 
-    const slug = wallForm.id.trim() || wallForm.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+    const slug =
+      wallForm.id.trim() ||
+      wallForm.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
 
     const imageUrl = await uploadWallImage(imageFile);
     if (!imageUrl) {
@@ -142,16 +296,20 @@ export function AdminScreen() {
   };
 
   const handleCreateRoute = async () => {
-    if (!selectedWallId) return;
+    if (!selectedWallId || !routeForm.path || routeForm.path.length < 3) {
+      showFeedback("Draw the route on the wall before saving.");
+      return;
+    }
 
     setUploading(true);
 
-    const ok = await createRoute({
+    const result = await createRoute({
       wall_id: selectedWallId,
       grade: routeForm.grade,
       color: routeForm.color,
       name: routeForm.name.trim() || null,
       setter: routeForm.setter.trim() || null,
+      path: routeForm.path,
       region_x: routeForm.region_x,
       region_y: routeForm.region_y,
       region_w: routeForm.region_w,
@@ -160,24 +318,155 @@ export function AdminScreen() {
 
     setUploading(false);
 
-    if (ok) {
+    if (result.ok) {
       showFeedback("Route added.");
-      setRouteForm(INITIAL_ROUTE);
+      resetRouteDraft();
       setView("wall-routes");
+    } else if (result.error?.includes("column routes.path does not exist")) {
+      showFeedback("Run the route path migration first. The database does not have routes.path yet.");
     } else {
       showFeedback("Failed to create route.");
     }
   };
 
   const handleDeleteRoute = async (routeId: string) => {
-    if (!selectedWallId) return;
+    if (!selectedWallId) {
+      return;
+    }
+
     await deleteRoute(routeId, selectedWallId);
     showFeedback("Route deleted.");
   };
 
   const handleToggleActive = async (routeId: string, active: boolean) => {
-    if (!selectedWallId) return;
+    if (!selectedWallId) {
+      return;
+    }
+
     await toggleRouteActive(routeId, active, selectedWallId);
+  };
+
+  const getNormalizedPoint = useCallback((event: React.PointerEvent<HTMLCanvasElement>): Point | null => {
+    const image = wallImageRef.current;
+    if (!image) {
+      return null;
+    }
+
+    const rect = image.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      return null;
+    }
+
+    return {
+      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+    };
+  }, []);
+
+  const finishDrawing = useCallback(() => {
+    const rawPath = livePathRef.current;
+    livePathRef.current = [];
+    drawingPointerIdRef.current = null;
+    setIsDrawing(false);
+
+    if (rawPath.length < 3) {
+      drawPreview([]);
+      showFeedback("Draw a closed shape around the route.");
+      return;
+    }
+
+    const simplifiedPath = simplifyRoutePath(rawPath, 40);
+    const bounds = getBoundingBoxFromPath(simplifiedPath);
+
+    setRouteForm((current) => ({
+      ...current,
+      path: simplifiedPath,
+      ...bounds,
+    }));
+  }, [drawPreview, showFeedback]);
+
+  useEffect(() => {
+    drawPreview();
+  }, [drawPreview, routeForm.path]);
+
+  const handleCanvasPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+
+    const point = getNormalizedPoint(event);
+    if (!point) {
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    drawingPointerIdRef.current = event.pointerId;
+    livePathRef.current = [point];
+    setIsDrawing(true);
+    setRouteForm((current) => ({ ...current, path: null }));
+    drawPreview([point]);
+  };
+
+  const handleCanvasPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawing || drawingPointerIdRef.current !== event.pointerId) {
+      return;
+    }
+
+    const point = getNormalizedPoint(event);
+    if (!point) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const currentPath = livePathRef.current;
+    const lastPoint = currentPath[currentPath.length - 1];
+
+    if (lastPoint) {
+      const dx = point.x - lastPoint.x;
+      const dy = point.y - lastPoint.y;
+      if (Math.hypot(dx, dy) < 0.0035) {
+        return;
+      }
+    }
+
+    livePathRef.current = [...currentPath, point];
+    drawPreview(livePathRef.current);
+  };
+
+  const handleCanvasPointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (drawingPointerIdRef.current !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const point = getNormalizedPoint(event);
+    const currentPath = livePathRef.current;
+    const lastPoint = currentPath[currentPath.length - 1];
+
+    if (
+      point &&
+      (!lastPoint || Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y) >= 0.0035)
+    ) {
+      livePathRef.current = [...currentPath, point];
+    }
+
+    finishDrawing();
+  };
+
+  const handleCanvasPointerCancel = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (drawingPointerIdRef.current !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    livePathRef.current = [];
+    drawingPointerIdRef.current = null;
+    setIsDrawing(false);
+    drawPreview([]);
   };
 
   if (loading) {
@@ -190,16 +479,14 @@ export function AdminScreen() {
 
   return (
     <div className="min-h-screen bg-[#1a1a1f] pb-8">
-      {/* Feedback toast */}
       {feedback && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 rounded-xl bg-[#a855f7] px-5 py-2.5 shadow-lg">
+        <div className="fixed top-4 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-[#a855f7] px-5 py-2.5 shadow-lg">
           <span className="text-[13px] text-white" style={{ fontWeight: 600 }}>
             {feedback}
           </span>
         </div>
       )}
 
-      {/* Header */}
       <div className="flex items-center gap-3 px-5 pt-14 pb-4">
         <button
           onClick={() => {
@@ -209,6 +496,7 @@ export function AdminScreen() {
               setView("walls");
               setSelectedWallId(null);
             } else if (view === "add-route") {
+              resetRouteDraft();
               setView("wall-routes");
             }
           }}
@@ -216,15 +504,14 @@ export function AdminScreen() {
         >
           <ArrowLeft size={18} className="text-white" />
         </button>
-        <h1 className="text-[22px] text-white" style={{ fontWeight: 700+0 }}>
+        <h1 className="text-[22px] text-white" style={{ fontWeight: 700 }}>
           {view === "walls" && "Admin"}
           {view === "add-wall" && "Add Wall"}
           {view === "wall-routes" && (selectedWall?.name || "Routes")}
-          {view === "add-route" && "Add Route"}
+          {view === "add-route" && "Draw Route"}
         </h1>
       </div>
 
-      {/* ─── WALLS LIST ─── */}
       {view === "walls" && (
         <div className="px-5">
           <button
@@ -250,20 +537,20 @@ export function AdminScreen() {
               {walls.map((wall) => (
                 <div
                   key={wall.id}
-                  className="flex items-center gap-3 rounded-xl bg-[#232329] border border-[#333340]/50 p-3"
+                  className="flex items-center gap-3 rounded-xl border border-[#333340]/50 bg-[#232329] p-3"
                 >
                   <ImageFallback
                     src={wall.image_url}
                     alt={wall.name}
-                    className="h-16 w-16 rounded-lg object-cover shrink-0"
+                    className="h-16 w-16 shrink-0 rounded-lg object-cover"
                   />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[15px] text-white truncate" style={{ fontWeight: 600 }}>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[15px] text-white" style={{ fontWeight: 600 }}>
                       {wall.name}
                     </p>
                     <p className="text-[12px] text-[#8a8a96]">ID: {wall.id}</p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex shrink-0 items-center gap-2">
                     <button
                       onClick={() => {
                         setSelectedWallId(wall.id);
@@ -288,12 +575,10 @@ export function AdminScreen() {
         </div>
       )}
 
-      {/* ─── ADD WALL ─── */}
       {view === "add-wall" && (
-        <div className="px-5 space-y-4">
-          {/* Image upload */}
+        <div className="space-y-4 px-5">
           <div>
-            <label className="mb-1.5 block text-[12px] text-[#8a8a96] uppercase tracking-wider">
+            <label className="mb-1.5 block text-[12px] uppercase tracking-wider text-[#8a8a96]">
               Wall Photo *
             </label>
             <input
@@ -304,12 +589,8 @@ export function AdminScreen() {
               className="hidden"
             />
             {imagePreview ? (
-              <div className="relative rounded-xl overflow-hidden">
-                <img
-                  src={imagePreview}
-                  alt="Preview"
-                  className="w-full h-48 object-cover"
-                />
+              <div className="relative overflow-hidden rounded-xl">
+                <img src={imagePreview} alt="Preview" className="h-48 w-full object-cover" />
                 <button
                   onClick={() => {
                     setImageFile(null);
@@ -326,51 +607,48 @@ export function AdminScreen() {
                 className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[#333340] bg-[#232329] py-10 transition-colors hover:border-[#a855f7]"
               >
                 <Upload size={28} className="text-[#8a8a96]" />
-                <span className="text-[13px] text-[#8a8a96]">
-                  Tap to upload wall photo
-                </span>
+                <span className="text-[13px] text-[#8a8a96]">Tap to upload wall photo</span>
               </button>
             )}
           </div>
 
-          {/* Name */}
           <div>
-            <label className="mb-1.5 block text-[12px] text-[#8a8a96] uppercase tracking-wider">
+            <label className="mb-1.5 block text-[12px] uppercase tracking-wider text-[#8a8a96]">
               Wall Name *
             </label>
             <input
               type="text"
               value={wallForm.name}
-              onChange={(e) => setWallForm({ ...wallForm, name: e.target.value })}
+              onChange={(event) => setWallForm({ ...wallForm, name: event.target.value })}
               placeholder="e.g. Overhang"
               className="w-full rounded-xl border border-[#333340] bg-[#2a2a32] px-4 py-3 text-[14px] text-white placeholder:text-[#666] focus:border-[#a855f7] focus:outline-none"
             />
           </div>
 
-          {/* Slug (optional) */}
           <div>
-            <label className="mb-1.5 block text-[12px] text-[#8a8a96] uppercase tracking-wider">
+            <label className="mb-1.5 block text-[12px] uppercase tracking-wider text-[#8a8a96]">
               Slug (auto-generated if empty)
             </label>
             <input
               type="text"
               value={wallForm.id}
-              onChange={(e) => setWallForm({ ...wallForm, id: e.target.value })}
-              placeholder={wallForm.name ? wallForm.name.toLowerCase().replace(/\s+/g, "-") : "overhang"}
+              onChange={(event) => setWallForm({ ...wallForm, id: event.target.value })}
+              placeholder={
+                wallForm.name ? wallForm.name.toLowerCase().replace(/\s+/g, "-") : "overhang"
+              }
               className="w-full rounded-xl border border-[#333340] bg-[#2a2a32] px-4 py-3 text-[14px] text-white placeholder:text-[#666] focus:border-[#a855f7] focus:outline-none"
             />
           </div>
 
-          {/* Display Order */}
           <div>
-            <label className="mb-1.5 block text-[12px] text-[#8a8a96] uppercase tracking-wider">
+            <label className="mb-1.5 block text-[12px] uppercase tracking-wider text-[#8a8a96]">
               Display Order
             </label>
             <input
               type="number"
               value={wallForm.display_order}
-              onChange={(e) =>
-                setWallForm({ ...wallForm, display_order: parseInt(e.target.value) || 0 })
+              onChange={(event) =>
+                setWallForm({ ...wallForm, display_order: Number.parseInt(event.target.value, 10) || 0 })
               }
               className="w-full rounded-xl border border-[#333340] bg-[#2a2a32] px-4 py-3 text-[14px] text-white focus:border-[#a855f7] focus:outline-none"
             />
@@ -388,237 +666,247 @@ export function AdminScreen() {
         </div>
       )}
 
-      {/* ─── WALL ROUTES ─── */}
       {view === "wall-routes" && selectedWall && (
         <div className="px-5">
-          {/* Wall preview */}
-          <div className="mb-4 rounded-xl overflow-hidden">
-            <ImageFallback
-              src={selectedWall.image_url}
-              alt={selectedWall.name}
-              className="w-full h-36 object-cover"
-            />
+          <div className="mb-4 overflow-hidden rounded-xl">
+            <ImageFallback src={selectedWall.image_url} alt={selectedWall.name} className="h-36 w-full object-cover" />
           </div>
 
           <button
             onClick={() => {
-              setRouteForm(INITIAL_ROUTE);
+              resetRouteDraft();
               setView("add-route");
             }}
             className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#a855f7] py-3 text-[14px] text-white transition-all active:scale-[0.98]"
             style={{ fontWeight: 600 }}
           >
-            <Plus size={18} /> Add Route
+            <Pencil size={18} /> Draw Route
           </button>
 
-          {routes.filter((r) => r.wall_id === selectedWallId).length === 0 ? (
+          {selectedWallRoutes.length === 0 ? (
             <div className="py-12 text-center">
               <p className="text-[14px] text-[#8a8a96]">No routes on this wall yet.</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {routes
-                .filter((r) => r.wall_id === selectedWallId)
-                .map((route) => (
+              {selectedWallRoutes.map((route) => (
+                <div
+                  key={route.id}
+                  className="flex items-center gap-3 rounded-xl border border-[#333340]/50 bg-[#232329] p-3"
+                >
                   <div
-                    key={route.id}
-                    className="flex items-center gap-3 rounded-xl bg-[#232329] border border-[#333340]/50 p-3"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
+                    style={{ backgroundColor: ROUTE_COLORS[route.color] || "#8a8a96" }}
                   >
-                    <div
-                      className="h-10 w-10 rounded-lg shrink-0 flex items-center justify-center"
-                      style={{ backgroundColor: ROUTE_COLORS[route.color] || "#8a8a96" }}
-                    >
-                      <span className="text-[13px] text-white" style={{ fontWeight: 800 }}>
-                        {route.grade}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[14px] text-white truncate" style={{ fontWeight: 500 }}>
-                        {route.name || "Unnamed"}
-                      </p>
-                      <p className="text-[11px] text-[#8a8a96]">
-                        {route.setter || "No setter"} · {route.color} ·{" "}
-                        ({route.region_x}, {route.region_y}, {route.region_w}×{route.region_h})
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        onClick={() => handleToggleActive(route.id, !route.active)}
-                        className="rounded-lg bg-[#2a2a32] p-2"
-                        title={route.active ? "Deactivate" : "Activate"}
-                      >
-                        {route.active ? (
-                          <Eye size={14} className="text-[#22c55e]" />
-                        ) : (
-                          <EyeOff size={14} className="text-[#8a8a96]" />
-                        )}
-                      </button>
-                      <button
-                        onClick={() => handleDeleteRoute(route.id)}
-                        className="rounded-lg bg-[#ef4444]/10 p-2"
-                      >
-                        <Trash2 size={14} className="text-[#ef4444]" />
-                      </button>
-                    </div>
+                    <span className="text-[13px] text-white" style={{ fontWeight: 800 }}>
+                      {route.grade}
+                    </span>
                   </div>
-                ))}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[14px] text-white" style={{ fontWeight: 500 }}>
+                      {route.name || "Unnamed"}
+                    </p>
+                    <p className="text-[11px] text-[#8a8a96]">
+                      {route.setter || "No setter"} · {route.color} · {route.path?.length || 0} pts
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button
+                      onClick={() => handleToggleActive(route.id, !route.active)}
+                      className="rounded-lg bg-[#2a2a32] p-2"
+                      title={route.active ? "Deactivate" : "Activate"}
+                    >
+                      {route.active ? (
+                        <Eye size={14} className="text-[#22c55e]" />
+                      ) : (
+                        <EyeOff size={14} className="text-[#8a8a96]" />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteRoute(route.id)}
+                      className="rounded-lg bg-[#ef4444]/10 p-2"
+                    >
+                      <Trash2 size={14} className="text-[#ef4444]" />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
       )}
 
-      {/* ─── ADD ROUTE ─── */}
       {view === "add-route" && selectedWall && (
-        <div className="px-5 space-y-4">
-          {/* Grade */}
-          <div>
-            <label className="mb-1.5 block text-[12px] text-[#8a8a96] uppercase tracking-wider">
-              Grade *
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {GRADES.map((g) => (
+        <div className="space-y-4 px-5">
+          <div className="rounded-2xl border border-[#333340] bg-[#232329] p-3">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[14px] text-white" style={{ fontWeight: 600 }}>
+                  Draw directly on the wall photo
+                </p>
+                <p className="mt-1 text-[12px] text-[#8a8a96]">
+                  Use touch or Apple Pencil. The shape is simplified before saving and the existing tap box fallback stays intact.
+                </p>
+              </div>
+              {routeForm.path && (
                 <button
-                  key={g}
-                  onClick={() => setRouteForm({ ...routeForm, grade: g })}
-                  className={`rounded-lg px-3 py-2 text-[13px] transition-all ${
-                    routeForm.grade === g
-                      ? "bg-[#a855f7] text-white"
-                      : "bg-[#2a2a32] text-[#8a8a96]"
-                  }`}
-                  style={{ fontWeight: routeForm.grade === g ? 700 : 500 }}
+                  onClick={resetRouteDraft}
+                  className="flex items-center gap-1 rounded-lg bg-[#2a2a32] px-3 py-2 text-[12px] text-white"
+                  style={{ fontWeight: 500 }}
                 >
-                  {g}
+                  <RotateCcw size={14} /> Clear
                 </button>
-              ))}
+              )}
             </div>
-          </div>
 
-          {/* Color */}
-          <div>
-            <label className="mb-1.5 block text-[12px] text-[#8a8a96] uppercase tracking-wider">
-              Hold Color *
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(ROUTE_COLORS).map(([name, hex]) => (
-                <button
-                  key={name}
-                  onClick={() => setRouteForm({ ...routeForm, color: name })}
-                  className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] transition-all ${
-                    routeForm.color === name
-                      ? "ring-2 ring-white"
-                      : "opacity-60"
-                  }`}
-                  style={{ backgroundColor: hex, fontWeight: 600, color: name === "white" || name === "yellow" ? "#000" : "#fff" }}
-                >
-                  {name}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Name */}
-          <div>
-            <label className="mb-1.5 block text-[12px] text-[#8a8a96] uppercase tracking-wider">
-              Route Name
-            </label>
-            <input
-              type="text"
-              value={routeForm.name}
-              onChange={(e) => setRouteForm({ ...routeForm, name: e.target.value })}
-              placeholder="e.g. Crimson Dyno"
-              className="w-full rounded-xl border border-[#333340] bg-[#2a2a32] px-4 py-3 text-[14px] text-white placeholder:text-[#666] focus:border-[#a855f7] focus:outline-none"
-            />
-          </div>
-
-          {/* Setter */}
-          <div>
-            <label className="mb-1.5 block text-[12px] text-[#8a8a96] uppercase tracking-wider">
-              Setter
-            </label>
-            <input
-              type="text"
-              value={routeForm.setter}
-              onChange={(e) => setRouteForm({ ...routeForm, setter: e.target.value })}
-              placeholder="e.g. Alex M."
-              className="w-full rounded-xl border border-[#333340] bg-[#2a2a32] px-4 py-3 text-[14px] text-white placeholder:text-[#666] focus:border-[#a855f7] focus:outline-none"
-            />
-          </div>
-
-          {/* Position */}
-          <div>
-            <label className="mb-1.5 block text-[12px] text-[#8a8a96] uppercase tracking-wider">
-              Position on Wall (% from top-left)
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { key: "region_x" as const, label: "X %" },
-                { key: "region_y" as const, label: "Y %" },
-                { key: "region_w" as const, label: "Width %" },
-                { key: "region_h" as const, label: "Height %" },
-              ].map((field) => (
-                <div key={field.key}>
-                  <span className="text-[11px] text-[#8a8a96]">{field.label}</span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={routeForm[field.key]}
-                    onChange={(e) =>
-                      setRouteForm({
-                        ...routeForm,
-                        [field.key]: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)),
-                      })
-                    }
-                    className="mt-1 w-full rounded-lg border border-[#333340] bg-[#2a2a32] px-3 py-2 text-[14px] text-white focus:border-[#a855f7] focus:outline-none"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Preview */}
-          <div>
-            <label className="mb-1.5 block text-[12px] text-[#8a8a96] uppercase tracking-wider">
-              Preview
-            </label>
-            <div className="relative rounded-xl overflow-hidden bg-[#111115]" style={{ height: 200 }}>
+            <div className="relative overflow-hidden rounded-xl bg-[#111115]">
               <ImageFallback
+                ref={wallImageRef}
                 src={selectedWall.image_url}
                 alt={selectedWall.name}
-                className="absolute inset-0 w-full h-full object-cover opacity-60"
+                className="block w-full select-none object-contain"
+                draggable={false}
+                onLoad={() => drawPreview()}
               />
-              <div
-                className="absolute rounded-lg border-2"
-                style={{
-                  left: `${routeForm.region_x}%`,
-                  top: `${routeForm.region_y}%`,
-                  width: `${routeForm.region_w}%`,
-                  height: `${routeForm.region_h}%`,
-                  backgroundColor: `${ROUTE_COLORS[routeForm.color] || "#888"}30`,
-                  borderColor: ROUTE_COLORS[routeForm.color] || "#888",
-                }}
-              >
-                <div
-                  className="absolute top-1 left-1 rounded px-1.5 py-0.5"
-                  style={{ backgroundColor: ROUTE_COLORS[routeForm.color] || "#888" }}
-                >
-                  <span className="text-[10px] text-white" style={{ fontWeight: 700 }}>
-                    {routeForm.grade}
+              <canvas
+                ref={canvasRef}
+                className="absolute inset-0 h-full w-full"
+                style={{ touchAction: "none" }}
+                onPointerDown={handleCanvasPointerDown}
+                onPointerMove={handleCanvasPointerMove}
+                onPointerUp={handleCanvasPointerUp}
+                onPointerCancel={handleCanvasPointerCancel}
+              />
+
+              {!routeForm.path && !isDrawing && (
+                <div className="pointer-events-none absolute inset-x-4 bottom-4 rounded-xl bg-black/55 px-4 py-2 text-center backdrop-blur-sm">
+                  <span className="text-[12px] text-white/90" style={{ fontWeight: 500 }}>
+                    Start drawing around the route area
                   </span>
                 </div>
-              </div>
+              )}
             </div>
           </div>
 
-          <button
-            onClick={handleCreateRoute}
-            disabled={uploading}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#a855f7] py-3.5 text-[15px] text-white transition-all disabled:opacity-40 active:scale-[0.98]"
-            style={{ fontWeight: 600 }}
-          >
-            {uploading ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
-            {uploading ? "Saving…" : "Add Route"}
-          </button>
+          {routeForm.path && (
+            <>
+              <div className="rounded-2xl border border-[#333340] bg-[#232329] p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-[13px] uppercase tracking-wider text-[#8a8a96]">
+                    Route Details
+                  </span>
+                  <span className="rounded-full bg-[#2a2a32] px-2.5 py-1 text-[11px] text-white">
+                    {routeForm.path.length} points
+                  </span>
+                </div>
+
+                <div className="mb-4">
+                  <label className="mb-1.5 block text-[12px] uppercase tracking-wider text-[#8a8a96]">
+                    Grade *
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {GRADES.map((grade) => (
+                      <button
+                        key={grade}
+                        onClick={() => setRouteForm({ ...routeForm, grade })}
+                        className={`rounded-lg px-3 py-2 text-[13px] transition-all ${
+                          routeForm.grade === grade
+                            ? "bg-[#a855f7] text-white"
+                            : "bg-[#2a2a32] text-[#8a8a96]"
+                        }`}
+                        style={{ fontWeight: routeForm.grade === grade ? 700 : 500 }}
+                      >
+                        {grade}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <label className="mb-1.5 block text-[12px] uppercase tracking-wider text-[#8a8a96]">
+                    Hold Color *
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(ROUTE_COLORS).map(([name, hex]) => (
+                      <button
+                        key={name}
+                        onClick={() => setRouteForm({ ...routeForm, color: name })}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] transition-all ${
+                          routeForm.color === name ? "ring-2 ring-white" : "opacity-60"
+                        }`}
+                        style={{
+                          backgroundColor: hex,
+                          fontWeight: 600,
+                          color: name === "white" || name === "yellow" ? "#000" : "#fff",
+                        }}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1.5 block text-[12px] uppercase tracking-wider text-[#8a8a96]">
+                      Route Name
+                    </label>
+                    <input
+                      type="text"
+                      value={routeForm.name}
+                      onChange={(event) => setRouteForm({ ...routeForm, name: event.target.value })}
+                      placeholder="e.g. Crimson Dyno"
+                      className="w-full rounded-xl border border-[#333340] bg-[#2a2a32] px-4 py-3 text-[14px] text-white placeholder:text-[#666] focus:border-[#a855f7] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-[12px] uppercase tracking-wider text-[#8a8a96]">
+                      Setter
+                    </label>
+                    <input
+                      type="text"
+                      value={routeForm.setter}
+                      onChange={(event) => setRouteForm({ ...routeForm, setter: event.target.value })}
+                      placeholder="e.g. Alex M."
+                      className="w-full rounded-xl border border-[#333340] bg-[#2a2a32] px-4 py-3 text-[14px] text-white placeholder:text-[#666] focus:border-[#a855f7] focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-[#333340] bg-[#232329] p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-[13px] uppercase tracking-wider text-[#8a8a96]">
+                    Bounding Box Fallback
+                  </span>
+                  <span className="text-[11px] text-[#8a8a96]">Used for quick hit detection</span>
+                </div>
+                <p className="text-[12px] text-[#8a8a96]">
+                  x {routeForm.region_x}% · y {routeForm.region_y}% · w {routeForm.region_w}% · h {routeForm.region_h}%
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={resetRouteDraft}
+                  className="flex-1 rounded-xl border border-[#333340] bg-[#2a2a32] py-3 text-[14px] text-white"
+                  style={{ fontWeight: 600 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateRoute}
+                  disabled={uploading}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#a855f7] py-3 text-[14px] text-white transition-all disabled:opacity-40"
+                  style={{ fontWeight: 600 }}
+                >
+                  {uploading ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+                  {uploading ? "Saving…" : "Save Route"}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

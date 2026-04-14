@@ -75,10 +75,10 @@ export function useAdmin() {
       const { error } = await supabase.from("routes").insert(route);
       if (error) {
         console.error("Create route failed:", error.message);
-        return false;
+        return { ok: false, error: error.message };
       }
       await loadRoutes(route.wall_id);
-      return true;
+      return { ok: true, error: null };
     },
     [loadRoutes]
   );
