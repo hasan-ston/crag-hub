@@ -4,6 +4,7 @@ import { HomeScreen } from "@/components/home-screen";
 import { WallView } from "@/components/wall-view";
 import { StatsScreen } from "@/components/stats-screen";
 import { ProfileScreen } from "@/components/profile-screen";
+import { AdminScreen } from "@/components/admin-screen";
 
 function RootLayout() {
   return (
@@ -28,5 +29,9 @@ export const router = createBrowserRouter([
   {
     path: "/wall/:wallId",
     Component: WallView,
+  },
+  {
+    path: "/admin",
+    Component: AdminScreen,
   },
 ]);

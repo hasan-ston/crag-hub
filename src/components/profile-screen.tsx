@@ -1,8 +1,10 @@
-import { Settings, LogOut, Bell, Moon, HelpCircle, ChevronRight } from "lucide-react";
+import { Settings, LogOut, Bell, Moon, HelpCircle, ChevronRight, Shield } from "lucide-react";
+import { useNavigate } from "react-router";
 import { useAuth } from "@/hooks/use-auth";
 import { useSessionStats } from "@/hooks/use-session-stats";
 
 export function ProfileScreen() {
+  const navigate = useNavigate();
   const { profile, signOut } = useAuth();
   const { stats } = useSessionStats();
 
@@ -104,6 +106,7 @@ export function ProfileScreen() {
 
       <div className="px-5 space-y-1">
         {[
+          { icon: Shield, label: "Admin Panel", action: () => navigate("/admin") },
           { icon: Bell, label: "Notifications", action: undefined },
           { icon: Moon, label: "Appearance", action: undefined },
           { icon: Settings, label: "Settings", action: undefined },
