@@ -1,6 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Mountain, Mail, Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+
+function getMagicLinkError(hash: string) {
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  const errorCode = params.get("error_code");
+  const description = params.get("error_description");
+
+  if (errorCode === "otp_expired") {
+    return "That magic link is invalid or expired. Request a new one.";
+  }
+
+  if (description) {
+    return description.replace(/\+/g, " ");
+  }
+
+  return null;
+}
 
 export function LoginScreen() {
   const { signInWithGoogle, signInWithEmail } = useAuth();
@@ -8,6 +24,21 @@ export function LoginScreen() {
   const [emailSent, setEmailSent] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const hashError = getMagicLinkError(window.location.hash);
+
+    if (!hashError) {
+      return;
+    }
+
+    setError(hashError);
+    window.history.replaceState(
+      {},
+      document.title,
+      `${window.location.pathname}${window.location.search}`
+    );
+  }, []);
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

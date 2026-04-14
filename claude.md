@@ -8,7 +8,7 @@ A mobile-first climbing session tracker for the McMaster University indoor climb
 
 - **Frontend:** React 18, TypeScript, Vite 6, Tailwind CSS v4
 - **Backend:** Supabase (Auth, Postgres, Storage)
-- **Deployment:** Vercel (SPA with `vercel.json` rewrite)
+- **Deployment:** Cloudflare Pages (SPA with `_redirects` fallback)
 - **Animation:** `motion` (framer-motion)
 - **Charts:** Recharts
 - **Icons:** Lucide React
@@ -108,6 +108,7 @@ Accessible from **Profile → Admin Panel** (`/admin`). Features:
 ```
 VITE_SUPABASE_URL=https://ashyybexejlsvobysaxa.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon key>
+VITE_SITE_URL=https://<your-cloudflare-pages-domain>
 ```
 
 ## Development

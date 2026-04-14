@@ -21,6 +21,16 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+function getAuthRedirectUrl() {
+  const configuredUrl = import.meta.env.VITE_SITE_URL?.trim();
+
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/+$/, "");
+  }
+
+  return window.location.origin;
+}
+
 async function upsertProfile(user: User): Promise<Profile | null> {
   const displayName =
     user.user_metadata?.full_name ||
@@ -98,14 +108,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInWithGoogle = useCallback(async () => {
     await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      options: { redirectTo: getAuthRedirectUrl() },
     });
   }, []);
 
   const signInWithEmail = useCallback(async (email: string) => {
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: getAuthRedirectUrl() },
     });
     return { error: error?.message || null };
   }, []);
