@@ -21,7 +21,7 @@ export function HomeScreen() {
               className="text-[28px] text-white mt-0.5"
               style={{ fontWeight: 700, lineHeight: 1.2 }}
             >
-              Crag Hub
+              Crag Climbing
             </h1>
           </div>
           {stats.todaySends > 0 && (

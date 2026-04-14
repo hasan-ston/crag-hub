@@ -37,7 +37,7 @@ export function LoginScreen() {
             className="text-[28px] text-white"
             style={{ fontWeight: 800, lineHeight: 1.2 }}
           >
-            Crag Hub
+            Crag Climbing
           </h1>
           <p className="mt-1.5 text-[14px] text-[#8a8a96]">
             McMaster Climbing Gym
