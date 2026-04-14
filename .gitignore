@@ -5,3 +5,9 @@ dist
 .env.*.local
 *.tsbuildinfo
 .vite
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
