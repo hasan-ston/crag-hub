@@ -7,8 +7,8 @@ import { ImageFallback } from "@/components/image-fallback";
 import { useRoutes } from "@/hooks/use-routes";
 import { ROUTE_COLORS, GRADES } from "@/lib/constants";
 import {
-  getRenderableRoutePath,
-  getRoutePathCentroid,
+  getRenderableRoutePaths,
+  getRoutePathCollectionCentroid,
   routePathToSvgPoints,
 } from "@/lib/route-path";
 import type { RouteWithStatus } from "@/lib/types";
@@ -79,12 +79,11 @@ export function WallView() {
   });
 
   const renderableRoutes = filteredRoutes.map((route) => {
-    const path = getRenderableRoutePath(route);
+    const paths = getRenderableRoutePaths(route);
     return {
       route,
-      path,
-      polygonPoints: routePathToSvgPoints(path),
-      centroid: getRoutePathCentroid(path),
+      polygonPoints: paths.map((path) => routePathToSvgPoints(path)),
+      centroid: getRoutePathCollectionCentroid(paths),
     };
   });
 
@@ -234,21 +233,21 @@ export function WallView() {
                 preserveAspectRatio="none"
                 className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
               >
-                {renderableRoutes.map(({ route, polygonPoints }) => {
+                {renderableRoutes.flatMap(({ route, polygonPoints }) => {
                   const isSelected = selectedRoute?.id === route.id;
                   const color = ROUTE_COLORS[route.color] || "#8a8a96";
                   const stroke = brightenHex(color, isSelected ? 36 : 20);
 
-                  return (
+                  return polygonPoints.map((points, index) => (
                     <polygon
-                      key={route.id}
-                      points={polygonPoints}
+                      key={`${route.id}-${index}`}
+                      points={points}
                       fill={hexToRgba(color, isSelected ? 0.34 : 0.24)}
                       stroke={stroke}
                       strokeWidth={isSelected ? 0.9 : 0.55}
                       strokeLinejoin="round"
                     />
-                  );
+                  ));
                 })}
               </svg>
 

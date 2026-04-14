@@ -18,6 +18,8 @@ export interface Point {
 }
 
 export type RoutePath = Point[];
+export type RoutePathCollection = RoutePath[];
+export type StoredRoutePath = RoutePath | RoutePathCollection;
 
 export interface Route {
   id: string;
@@ -26,7 +28,7 @@ export interface Route {
   color: string;
   name: string | null;
   setter: string | null;
-  path: RoutePath | null;
+  path: StoredRoutePath | null;
   region_x: number;
   region_y: number;
   region_w: number;

@@ -8,12 +8,15 @@ import {
 } from "react";
 import type { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { ADMIN_EMAIL } from "@/lib/constants";
 import type { Profile } from "@/lib/types";
 
 interface AuthState {
   user: User | null;
   profile: Profile | null;
   loading: boolean;
+  userEmail: string | null;
+  isAdmin: boolean;
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
@@ -126,9 +129,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null);
   }, []);
 
+  const userEmail = user?.email?.toLowerCase() || null;
+  const isAdmin = userEmail === ADMIN_EMAIL;
+
   return (
     <AuthContext.Provider
-      value={{ user, profile, loading, signInWithGoogle, signInWithEmail, signOut }}
+      value={{
+        user,
+        profile,
+        loading,
+        userEmail,
+        isAdmin,
+        signInWithGoogle,
+        signInWithEmail,
+        signOut,
+      }}
     >
       {children}
     </AuthContext.Provider>
