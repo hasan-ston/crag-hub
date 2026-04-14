@@ -1,21 +1,33 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
-import type { Route, RouteWithStatus, LogType } from "@/lib/types";
+import type { Route, RouteWithStatus, LogType, Wall } from "@/lib/types";
 
 export function useRoutes(wallId: string) {
   const { user } = useAuth();
+  const [wall, setWall] = useState<Wall | null>(null);
   const [routes, setRoutes] = useState<RouteWithStatus[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    const { data: routeRows } = await supabase
-      .from("routes")
-      .select("*")
-      .eq("wall_id", wallId)
-      .eq("active", true);
+    if (!wallId) {
+      setWall(null);
+      setRoutes([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+
+    const [{ data: wallRow }, { data: routeRows }] = await Promise.all([
+      supabase.from("walls").select("*").eq("id", wallId).maybeSingle(),
+      supabase.from("routes").select("*").eq("wall_id", wallId).eq("active", true),
+    ]);
+
+    setWall((wallRow as Wall | null) || null);
 
     if (!routeRows) {
+      setRoutes([]);
       setLoading(false);
       return;
     }
@@ -55,5 +67,5 @@ export function useRoutes(wallId: string) {
     load();
   }, [load]);
 
-  return { routes, loading, refresh: load };
+  return { wall, routes, loading, refresh: load };
 }

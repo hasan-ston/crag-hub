@@ -1,11 +1,14 @@
-import { useState } from "react";
+import { forwardRef, useState } from "react";
 
 const ERROR_IMG_SRC =
   "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODgiIGhlaWdodD0iODgiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBvcGFjaXR5PSIuMyIgZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIzLjciPjxyZWN0IHg9IjE2IiB5PSIxNiIgd2lkdGg9IjU2IiBoZWlnaHQ9IjU2IiByeD0iNiIvPjxwYXRoIGQ9Im0xNiA1OCAxNi0xOCAzMiAzMiIvPjxjaXJjbGUgY3g9IjUzIiBjeT0iMzUiIHI9IjciLz48L3N2Zz4KCg==";
 
 interface Props extends React.ImgHTMLAttributes<HTMLImageElement> {}
 
-export function ImageFallback({ src, alt, style, className, ...rest }: Props) {
+export const ImageFallback = forwardRef<HTMLImageElement, Props>(function ImageFallback(
+  { src, alt, style, className, onError, ...rest },
+  ref
+) {
   const [didError, setDidError] = useState(false);
 
   if (didError) {
@@ -23,12 +26,16 @@ export function ImageFallback({ src, alt, style, className, ...rest }: Props) {
 
   return (
     <img
+      ref={ref}
       src={src}
       alt={alt}
       className={className}
       style={style}
       {...rest}
-      onError={() => setDidError(true)}
+      onError={(event) => {
+        setDidError(true);
+        onError?.(event);
+      }}
     />
   );
-}
+});

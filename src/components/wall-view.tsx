@@ -6,37 +6,87 @@ import { RouteBottomSheet } from "@/components/route-bottom-sheet";
 import { ImageFallback } from "@/components/image-fallback";
 import { useRoutes } from "@/hooks/use-routes";
 import { ROUTE_COLORS, GRADES } from "@/lib/constants";
+import {
+  getRenderableRoutePath,
+  getRoutePathCentroid,
+  routePathToSvgPoints,
+} from "@/lib/route-path";
 import type { RouteWithStatus } from "@/lib/types";
+
+function hexToRgba(hex: string, alpha: number) {
+  const normalized = hex.replace("#", "");
+  const safe =
+    normalized.length === 3
+      ? normalized
+          .split("")
+          .map((value) => `${value}${value}`)
+          .join("")
+      : normalized;
+
+  const r = Number.parseInt(safe.slice(0, 2), 16);
+  const g = Number.parseInt(safe.slice(2, 4), 16);
+  const b = Number.parseInt(safe.slice(4, 6), 16);
+
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function brightenHex(hex: string, amount = 22) {
+  const normalized = hex.replace("#", "");
+  const safe =
+    normalized.length === 3
+      ? normalized
+          .split("")
+          .map((value) => `${value}${value}`)
+          .join("")
+      : normalized;
+
+  const brighten = (value: string) =>
+    Math.min(255, Number.parseInt(value, 16) + amount)
+      .toString(16)
+      .padStart(2, "0");
+
+  return `#${brighten(safe.slice(0, 2))}${brighten(safe.slice(2, 4))}${brighten(safe.slice(4, 6))}`;
+}
 
 export function WallView() {
   const navigate = useNavigate();
   const { wallId } = useParams<{ wallId: string }>();
-  const { routes, loading, refresh } = useRoutes(wallId || "");
+  const { wall, routes, loading, refresh } = useRoutes(wallId || "");
   const [selectedRoute, setSelectedRoute] = useState<RouteWithStatus | null>(null);
   const [showFilters, setShowFilters] = useState(false);
-  const [activeColors, setActiveColors] = useState<Set<string>>(
-    new Set(Object.keys(ROUTE_COLORS))
-  );
+  const [activeColors, setActiveColors] = useState<Set<string>>(new Set(Object.keys(ROUTE_COLORS)));
   const [gradeRange, setGradeRange] = useState<[number, number]>([0, 10]);
 
   const toggleColor = useCallback((color: string) => {
-    setActiveColors((prev) => {
-      const next = new Set(prev);
-      if (next.has(color)) next.delete(color);
-      else next.add(color);
+    setActiveColors((previous) => {
+      const next = new Set(previous);
+      if (next.has(color)) {
+        next.delete(color);
+      } else {
+        next.add(color);
+      }
       return next;
     });
   }, []);
 
-  const filteredRoutes = routes.filter((r) => {
-    if (!activeColors.has(r.color)) return false;
-    const gradeNum = parseInt(r.grade.slice(1));
-    return gradeNum >= gradeRange[0] && gradeNum <= gradeRange[1];
+  const filteredRoutes = routes.filter((route) => {
+    if (!activeColors.has(route.color)) {
+      return false;
+    }
+
+    const gradeNumber = Number.parseInt(route.grade.slice(1), 10);
+    return gradeNumber >= gradeRange[0] && gradeNumber <= gradeRange[1];
   });
 
-  const wallImage = routes[0]
-    ? undefined
-    : undefined;
+  const renderableRoutes = filteredRoutes.map((route) => {
+    const path = getRenderableRoutePath(route);
+    return {
+      route,
+      path,
+      polygonPoints: routePathToSvgPoints(path),
+      centroid: getRoutePathCentroid(path),
+    };
+  });
 
   const handleLogComplete = () => {
     refresh();
@@ -51,23 +101,20 @@ export function WallView() {
   }
 
   return (
-    <div className="fixed inset-0 bg-[#111115] flex flex-col">
+    <div className="fixed inset-0 flex flex-col bg-[#111115]">
       <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-4 pt-12 pb-3">
         <button
           onClick={() => navigate("/")}
-          className="flex items-center justify-center w-10 h-10 rounded-full bg-black/50 backdrop-blur-md"
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-black/50 backdrop-blur-md"
         >
           <ArrowLeft size={20} className="text-white" />
         </button>
-        <h2
-          className="text-[15px] text-white/90"
-          style={{ fontWeight: 600 }}
-        >
-          {wallId?.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+        <h2 className="text-[15px] text-white/90" style={{ fontWeight: 600 }}>
+          {wall?.name || wallId?.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())}
         </h2>
         <button
           onClick={() => setShowFilters(!showFilters)}
-          className={`flex items-center justify-center w-10 h-10 rounded-full backdrop-blur-md transition-colors ${
+          className={`flex h-10 w-10 items-center justify-center rounded-full backdrop-blur-md transition-colors ${
             showFilters ? "bg-[#a855f7]" : "bg-black/50"
           }`}
         >
@@ -82,11 +129,11 @@ export function WallView() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.2 }}
-            className="absolute top-28 left-4 right-4 z-30 rounded-2xl bg-[#232329]/95 backdrop-blur-lg border border-[#333340] p-4"
+            className="absolute top-28 left-4 right-4 z-30 rounded-2xl border border-[#333340] bg-[#232329]/95 p-4 backdrop-blur-lg"
           >
-            <div className="flex items-center justify-between mb-3">
+            <div className="mb-3 flex items-center justify-between">
               <span
-                className="text-[13px] text-[#8a8a96] uppercase tracking-wider"
+                className="text-[13px] uppercase tracking-wider text-[#8a8a96]"
                 style={{ fontWeight: 600 }}
               >
                 Filters
@@ -97,7 +144,7 @@ export function WallView() {
             </div>
 
             <div className="mb-4">
-              <span className="text-[12px] text-[#8a8a96] uppercase tracking-wider mb-2 block">
+              <span className="mb-2 block text-[12px] uppercase tracking-wider text-[#8a8a96]">
                 Color
               </span>
               <div className="flex flex-wrap gap-2">
@@ -105,10 +152,8 @@ export function WallView() {
                   <button
                     key={name}
                     onClick={() => toggleColor(name)}
-                    className={`w-8 h-8 rounded-full border-2 transition-all ${
-                      activeColors.has(name)
-                        ? "border-white scale-110"
-                        : "border-transparent opacity-30"
+                    className={`h-8 w-8 rounded-full border-2 transition-all ${
+                      activeColors.has(name) ? "scale-110 border-white" : "border-transparent opacity-30"
                     }`}
                     style={{ backgroundColor: hex }}
                   />
@@ -117,7 +162,7 @@ export function WallView() {
             </div>
 
             <div>
-              <span className="text-[12px] text-[#8a8a96] uppercase tracking-wider mb-2 block">
+              <span className="mb-2 block text-[12px] uppercase tracking-wider text-[#8a8a96]">
                 Grade: V{gradeRange[0]} – V{gradeRange[1]}
               </span>
               <div className="flex gap-2">
@@ -126,9 +171,9 @@ export function WallView() {
                   min={0}
                   max={10}
                   value={gradeRange[0]}
-                  onChange={(e) =>
+                  onChange={(event) =>
                     setGradeRange([
-                      Math.min(+e.target.value, gradeRange[1]),
+                      Math.min(Number(event.target.value), gradeRange[1]),
                       gradeRange[1],
                     ])
                   }
@@ -139,19 +184,19 @@ export function WallView() {
                   min={0}
                   max={10}
                   value={gradeRange[1]}
-                  onChange={(e) =>
+                  onChange={(event) =>
                     setGradeRange([
                       gradeRange[0],
-                      Math.max(+e.target.value, gradeRange[0]),
+                      Math.max(Number(event.target.value), gradeRange[0]),
                     ])
                   }
                   className="flex-1 accent-[#a855f7]"
                 />
               </div>
-              <div className="flex justify-between mt-1">
-                {GRADES.filter((_, i) => i % 2 === 0).map((g) => (
-                  <span key={g} className="text-[10px] text-[#8a8a96]">
-                    {g}
+              <div className="mt-1 flex justify-between">
+                {GRADES.filter((_, index) => index % 2 === 0).map((grade) => (
+                  <span key={grade} className="text-[10px] text-[#8a8a96]">
+                    {grade}
                   </span>
                 ))}
               </div>
@@ -160,94 +205,150 @@ export function WallView() {
         )}
       </AnimatePresence>
 
-      <div className="relative flex-1 overflow-hidden">
-        {routes.length === 0 ? (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center px-8">
-              <p
-                className="text-[16px] text-white/70"
-                style={{ fontWeight: 500 }}
-              >
-                No routes on this wall yet
+      <div className="relative flex-1 overflow-auto">
+        {!wall ? (
+          <div className="flex h-full items-center justify-center px-8">
+            <div className="text-center">
+              <p className="text-[16px] text-white/70" style={{ fontWeight: 500 }}>
+                Wall not found
               </p>
-              <p className="text-[13px] text-[#8a8a96] mt-1">
-                Routes will appear here once they're added.
+              <p className="mt-1 text-[13px] text-[#8a8a96]">
+                This wall could not be loaded from Supabase.
               </p>
             </div>
           </div>
         ) : (
-          <>
-            <div className="absolute inset-0 bg-[#1a1a1f]" />
+          <div className="flex min-h-full items-center justify-center px-4 pt-24 pb-28">
+            <div className="relative inline-block max-w-full overflow-hidden rounded-[28px] border border-white/8 bg-[#1a1a1f] shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
+              <ImageFallback
+                src={wall.image_url}
+                alt={wall.name}
+                className="block max-h-[calc(100vh-11rem)] max-w-full select-none object-contain"
+                draggable={false}
+              />
 
-            {filteredRoutes.map((route) => {
-              const isSelected = selectedRoute?.id === route.id;
-              const color = ROUTE_COLORS[route.color] || "#8a8a96";
-              const statusIcon =
-                route.userLogType === "flash" || route.userLogType === "send"
-                  ? "✔"
-                  : route.userLogType === "project"
-                  ? "◐"
-                  : null;
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/10" />
 
-              return (
-                <button
-                  key={route.id}
-                  onClick={() => setSelectedRoute(isSelected ? null : route)}
-                  className="absolute transition-all duration-200"
-                  style={{
-                    left: `${route.region_x}%`,
-                    top: `${route.region_y}%`,
-                    width: `${route.region_w}%`,
-                    height: `${route.region_h}%`,
-                  }}
-                >
+              <svg
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+                className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+              >
+                {renderableRoutes.map(({ route, polygonPoints }) => {
+                  const isSelected = selectedRoute?.id === route.id;
+                  const color = ROUTE_COLORS[route.color] || "#8a8a96";
+                  const stroke = brightenHex(color, isSelected ? 36 : 20);
+
+                  return (
+                    <polygon
+                      key={route.id}
+                      points={polygonPoints}
+                      fill={hexToRgba(color, isSelected ? 0.34 : 0.24)}
+                      stroke={stroke}
+                      strokeWidth={isSelected ? 0.9 : 0.55}
+                      strokeLinejoin="round"
+                    />
+                  );
+                })}
+              </svg>
+
+              {renderableRoutes.map(({ route, centroid }) => {
+                const isSelected = selectedRoute?.id === route.id;
+                const color = ROUTE_COLORS[route.color] || "#8a8a96";
+
+                return (
                   <div
-                    className="absolute inset-0 rounded-xl border-2 transition-all duration-200"
+                    key={`${route.id}-glow`}
+                    className="pointer-events-none absolute"
                     style={{
-                      backgroundColor: isSelected
-                        ? `${color}30`
-                        : `${color}18`,
-                      borderColor: isSelected ? color : `${color}60`,
-                      boxShadow: isSelected
-                        ? `0 0 20px ${color}40, inset 0 0 15px ${color}15`
-                        : "none",
+                      left: `${(centroid.x * 100).toFixed(2)}%`,
+                      top: `${(centroid.y * 100).toFixed(2)}%`,
+                      width: `${Math.max(route.region_w * 0.5, 8)}%`,
+                      height: `${Math.max(route.region_h * 0.95, 16)}%`,
+                      transform: "translate(-50%, -85%)",
+                      background: `linear-gradient(to top, ${hexToRgba(color, isSelected ? 0.55 : 0.4)}, transparent)`,
+                      filter: "blur(12px)",
+                      opacity: isSelected ? 0.34 : 0.2,
                     }}
                   />
-                  <div
-                    className="absolute top-2 left-2 flex items-center gap-1 rounded-lg px-2 py-0.5 transition-all duration-200"
+                );
+              })}
+
+              {renderableRoutes.map(({ route }) => {
+                const isSelected = selectedRoute?.id === route.id;
+                const color = ROUTE_COLORS[route.color] || "#8a8a96";
+                const statusIcon =
+                  route.userLogType === "flash" || route.userLogType === "send"
+                    ? "✔"
+                    : route.userLogType === "project"
+                      ? "◐"
+                      : null;
+
+                return (
+                  <button
+                    key={route.id}
+                    onClick={() => setSelectedRoute(isSelected ? null : route)}
+                    className="absolute overflow-visible rounded-[22px] transition-all duration-200"
                     style={{
-                      backgroundColor: isSelected ? color : `${color}cc`,
-                      boxShadow: isSelected
-                        ? `0 0 12px ${color}60`
-                        : "none",
+                      left: `${route.region_x}%`,
+                      top: `${route.region_y}%`,
+                      width: `${route.region_w}%`,
+                      height: `${route.region_h}%`,
+                      backgroundColor: isSelected ? hexToRgba(color, 0.08) : "transparent",
+                      boxShadow: isSelected ? `0 0 24px ${hexToRgba(color, 0.2)}` : "none",
                     }}
+                    aria-label={`${route.grade} ${route.name || "route"}`}
                   >
-                    <span
-                      className="text-[12px] text-white"
-                      style={{ fontWeight: 700 }}
+                    <div
+                      className="absolute top-2 left-2 flex items-center gap-1 rounded-lg px-2 py-0.5 transition-all duration-200"
+                      style={{
+                        backgroundColor: isSelected ? color : hexToRgba(color, 0.88),
+                        boxShadow: isSelected ? `0 0 12px ${hexToRgba(color, 0.6)}` : "none",
+                      }}
                     >
-                      {route.grade}
-                    </span>
-                    {statusIcon && (
-                      <span className="text-[10px] text-white/90">
-                        {statusIcon}
+                      <span className="text-[12px] text-white" style={{ fontWeight: 700 }}>
+                        {route.grade}
                       </span>
-                    )}
+                      {statusIcon && <span className="text-[10px] text-white/90">{statusIcon}</span>}
+                    </div>
+                  </button>
+                );
+              })}
+
+              {routes.length > 0 && filteredRoutes.length === 0 && (
+                <div className="absolute inset-0 flex items-center justify-center px-8">
+                  <div className="rounded-2xl bg-black/55 px-5 py-4 text-center backdrop-blur-md">
+                    <p className="text-[16px] text-white/80" style={{ fontWeight: 500 }}>
+                      No routes match the current filters
+                    </p>
+                    <p className="mt-1 text-[12px] text-[#c7c7d1]">
+                      Adjust the color or grade range to see more routes.
+                    </p>
                   </div>
-                </button>
-              );
-            })}
-          </>
+                </div>
+              )}
+
+              {routes.length === 0 && (
+                <div className="absolute inset-0 flex items-center justify-center px-8">
+                  <div className="rounded-2xl bg-black/55 px-5 py-4 text-center backdrop-blur-md">
+                    <p className="text-[16px] text-white/80" style={{ fontWeight: 500 }}>
+                      No routes on this wall yet
+                    </p>
+                    <p className="mt-1 text-[12px] text-[#c7c7d1]">
+                      Routes will appear here once they&apos;re added.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
 
-      {routes.length > 0 && (
-        <div className="absolute bottom-20 left-0 right-0 flex justify-center pointer-events-none z-20">
-          <div className="rounded-full bg-black/60 backdrop-blur-md px-4 py-1.5">
-            <span
-              className="text-[12px] text-white/80"
-              style={{ fontWeight: 500 }}
-            >
+      {wall && (
+        <div className="pointer-events-none absolute bottom-20 left-0 right-0 z-20 flex justify-center">
+          <div className="rounded-full bg-black/60 px-4 py-1.5 backdrop-blur-md">
+            <span className="text-[12px] text-white/80" style={{ fontWeight: 500 }}>
               {filteredRoutes.length} routes visible
             </span>
           </div>

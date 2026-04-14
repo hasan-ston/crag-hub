@@ -12,6 +12,13 @@ export interface Wall {
   display_order: number;
 }
 
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export type RoutePath = Point[];
+
 export interface Route {
   id: string;
   wall_id: string;
@@ -19,6 +26,7 @@ export interface Route {
   color: string;
   name: string | null;
   setter: string | null;
+  path: RoutePath | null;
   region_x: number;
   region_y: number;
   region_w: number;
