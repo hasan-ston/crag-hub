@@ -5,7 +5,7 @@ import { useSessionStats } from "@/hooks/use-session-stats";
 
 export function ProfileScreen() {
   const navigate = useNavigate();
-  const { profile, signOut } = useAuth();
+  const { profile, signOut, userEmail, isAdmin } = useAuth();
   const { stats } = useSessionStats();
 
   const initials = profile?.display_name
@@ -52,6 +52,9 @@ export function ProfileScreen() {
           >
             {profile?.display_name || "Climber"}
           </h2>
+          {userEmail && (
+            <p className="text-[13px] text-[#8a8a96]">{userEmail}</p>
+          )}
           {profile?.created_at && (
             <p className="text-[13px] text-[#8a8a96]">
               Member since{" "}
@@ -106,7 +109,9 @@ export function ProfileScreen() {
 
       <div className="px-5 space-y-1">
         {[
-          { icon: Shield, label: "Admin Panel", action: () => navigate("/admin") },
+          ...(isAdmin
+            ? [{ icon: Shield, label: "Admin Panel", action: () => navigate("/admin") }]
+            : []),
           { icon: Bell, label: "Notifications", action: undefined },
           { icon: Moon, label: "Appearance", action: undefined },
           { icon: Settings, label: "Settings", action: undefined },

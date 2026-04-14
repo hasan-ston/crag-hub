@@ -1,4 +1,10 @@
-import type { Point, Route, RoutePath } from "@/lib/types";
+import type {
+  Point,
+  Route,
+  RoutePath,
+  RoutePathCollection,
+  StoredRoutePath,
+} from "@/lib/types";
 
 const MAX_POINTS = 40;
 
@@ -73,6 +79,36 @@ export function sanitizeRoutePath(points: RoutePath): RoutePath {
   }));
 }
 
+function isPoint(value: unknown): value is Point {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "x" in value &&
+    "y" in value &&
+    typeof value.x === "number" &&
+    typeof value.y === "number"
+  );
+}
+
+function isRoutePath(value: unknown): value is RoutePath {
+  return Array.isArray(value) && value.every((point) => isPoint(point));
+}
+
+export function normalizeStoredRoutePath(path: StoredRoutePath | null | undefined): RoutePathCollection {
+  if (!path || !Array.isArray(path) || path.length === 0) {
+    return [];
+  }
+
+  if (isRoutePath(path)) {
+    return path.length >= 3 ? [sanitizeRoutePath(path)] : [];
+  }
+
+  return path
+    .filter((segment): segment is RoutePath => isRoutePath(segment))
+    .map((segment) => sanitizeRoutePath(segment))
+    .filter((segment) => segment.length >= 3);
+}
+
 export function simplifyRoutePath(points: RoutePath, maxPoints = MAX_POINTS): RoutePath {
   if (points.length <= 2) {
     return sanitizeRoutePath(points);
@@ -105,6 +141,21 @@ export function getBoundingBoxFromPath(path: RoutePath) {
     region_w: Number((Math.max(maxX - minX, 0.03) * 100).toFixed(2)),
     region_h: Number((Math.max(maxY - minY, 0.03) * 100).toFixed(2)),
   };
+}
+
+export function getBoundingBoxFromPaths(paths: RoutePathCollection) {
+  const points = paths.flatMap((path) => sanitizeRoutePath(path));
+
+  if (points.length === 0) {
+    return {
+      region_x: 0,
+      region_y: 0,
+      region_w: 0,
+      region_h: 0,
+    };
+  }
+
+  return getBoundingBoxFromPath(points);
 }
 
 export function getRoutePathCentroid(path: RoutePath): Point {
@@ -141,12 +192,20 @@ export function getFallbackPathFromRoute(route: Pick<Route, "region_x" | "region
   ];
 }
 
-export function getRenderableRoutePath(route: Pick<Route, "path" | "region_x" | "region_y" | "region_w" | "region_h">): RoutePath {
-  if (route.path && route.path.length >= 3) {
-    return sanitizeRoutePath(route.path);
+export function getRenderableRoutePaths(
+  route: Pick<Route, "path" | "region_x" | "region_y" | "region_w" | "region_h">
+): RoutePathCollection {
+  const normalizedPaths = normalizeStoredRoutePath(route.path);
+  if (normalizedPaths.length > 0) {
+    return normalizedPaths;
   }
 
-  return getFallbackPathFromRoute(route);
+  return [getFallbackPathFromRoute(route)];
+}
+
+export function getRoutePathCollectionCentroid(paths: RoutePathCollection): Point {
+  const points = paths.flatMap((path) => sanitizeRoutePath(path));
+  return getRoutePathCentroid(points);
 }
 
 export function routePathToSvgPoints(path: RoutePath) {

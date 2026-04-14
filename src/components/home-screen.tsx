@@ -102,7 +102,7 @@ export function HomeScreen() {
               <ImageFallback
                 src={wall.image_url}
                 alt={wall.name}
-                className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                className="absolute inset-0 h-full w-full bg-[#19191f] p-2 object-contain"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
               <div className="absolute bottom-0 left-0 right-0 p-3">

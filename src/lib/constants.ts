@@ -21,6 +21,8 @@ export const LOG_POINTS: Record<string, number> = {
   project: 1,
 };
 
+export const ADMIN_EMAIL = "mhd.hasan236@gmail.com";
+
 export function parseGradeNumber(grade: string): number {
   const match = grade.match(/V(\d+)/);
   return match ? parseInt(match[1], 10) : 0;

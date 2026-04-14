@@ -13,14 +13,16 @@ import {
   Pencil,
   RotateCcw,
 } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 import { useAdmin } from "@/hooks/use-admin";
 import { ROUTE_COLORS, GRADES } from "@/lib/constants";
 import { ImageFallback } from "@/components/image-fallback";
 import {
-  getBoundingBoxFromPath,
+  getBoundingBoxFromPaths,
+  normalizeStoredRoutePath,
   simplifyRoutePath,
 } from "@/lib/route-path";
-import type { Point, RoutePath } from "@/lib/types";
+import type { Point, RoutePath, RoutePathCollection } from "@/lib/types";
 
 type AdminView = "walls" | "add-wall" | "wall-routes" | "add-route";
 
@@ -35,7 +37,7 @@ interface RouteForm {
   color: string;
   name: string;
   setter: string;
-  path: RoutePath | null;
+  paths: RoutePathCollection;
   region_x: number;
   region_y: number;
   region_w: number;
@@ -48,12 +50,25 @@ const INITIAL_ROUTE: RouteForm = {
   color: "green",
   name: "",
   setter: "",
-  path: null,
+  paths: [],
   region_x: 10,
   region_y: 10,
   region_w: 20,
   region_h: 30,
 };
+
+function getDraftBounds(paths: RoutePathCollection) {
+  if (paths.length === 0) {
+    return {
+      region_x: INITIAL_ROUTE.region_x,
+      region_y: INITIAL_ROUTE.region_y,
+      region_w: INITIAL_ROUTE.region_w,
+      region_h: INITIAL_ROUTE.region_h,
+    };
+  }
+
+  return getBoundingBoxFromPaths(paths);
+}
 
 function hexToRgba(hex: string, alpha: number) {
   const normalized = hex.replace("#", "");
@@ -110,6 +125,7 @@ function drawPolygon(
 
 export function AdminScreen() {
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   const {
     walls,
     routes,
@@ -132,6 +148,7 @@ export function AdminScreen() {
   const [uploading, setUploading] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [drawScale, setDrawScale] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wallImageRef = useRef<HTMLImageElement>(null);
@@ -140,6 +157,7 @@ export function AdminScreen() {
 
   const selectedWall = walls.find((wall) => wall.id === selectedWallId);
   const selectedWallRoutes = routes.filter((route) => route.wall_id === selectedWallId);
+  const totalDraftPoints = routeForm.paths.reduce((sum, path) => sum + path.length, 0);
 
   useEffect(() => {
     if (selectedWallId) {
@@ -188,25 +206,37 @@ export function AdminScreen() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, width, height);
 
-      const previewPath = activePath ?? routeForm.path;
-      if (!previewPath || previewPath.length === 0) {
-        return;
+      for (const savedPath of routeForm.paths) {
+        drawPolygon(
+          ctx,
+          savedPath,
+          ROUTE_COLORS[routeForm.color] || "#8a8a96",
+          width,
+          height,
+          {
+            closed: true,
+            fillAlpha: 0.28,
+            lineWidth: 2.5,
+          }
+        );
       }
 
-      drawPolygon(
-        ctx,
-        previewPath,
-        ROUTE_COLORS[routeForm.color] || "#8a8a96",
-        width,
-        height,
-        {
-          closed: !isDrawing && previewPath.length >= 3,
-          fillAlpha: isDrawing ? 0.14 : 0.28,
-          lineWidth: isDrawing ? 2 : 2.5,
-        }
-      );
+      if (activePath && activePath.length > 0) {
+        drawPolygon(
+          ctx,
+          activePath,
+          ROUTE_COLORS[routeForm.color] || "#8a8a96",
+          width,
+          height,
+          {
+            closed: !isDrawing && activePath.length >= 3,
+            fillAlpha: isDrawing ? 0.14 : 0.22,
+            lineWidth: isDrawing ? 2 : 2.5,
+          }
+        );
+      }
     },
-    [isDrawing, routeForm.color, routeForm.path]
+    [isDrawing, routeForm.color, routeForm.paths]
   );
 
   useEffect(() => {
@@ -225,15 +255,26 @@ export function AdminScreen() {
     observer.observe(image);
 
     return () => observer.disconnect();
-  }, [drawPreview, view]);
+  }, [drawPreview, drawScale, view]);
 
   const resetRouteDraft = useCallback(() => {
     livePathRef.current = [];
     drawingPointerIdRef.current = null;
     setIsDrawing(false);
+    setDrawScale(1);
     setRouteForm(INITIAL_ROUTE);
-    window.requestAnimationFrame(() => drawPreview([]));
-  }, [drawPreview]);
+  }, []);
+
+  const undoLastRoutePath = useCallback(() => {
+    setRouteForm((current) => {
+      const nextPaths = current.paths.slice(0, -1);
+      return {
+        ...current,
+        paths: nextPaths,
+        ...getDraftBounds(nextPaths),
+      };
+    });
+  }, []);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -296,8 +337,8 @@ export function AdminScreen() {
   };
 
   const handleCreateRoute = async () => {
-    if (!selectedWallId || !routeForm.path || routeForm.path.length < 3) {
-      showFeedback("Draw the route on the wall before saving.");
+    if (!selectedWallId || routeForm.paths.length === 0) {
+      showFeedback("Draw at least one route region before saving.");
       return;
     }
 
@@ -309,7 +350,7 @@ export function AdminScreen() {
       color: routeForm.color,
       name: routeForm.name.trim() || null,
       setter: routeForm.setter.trim() || null,
-      path: routeForm.path,
+      path: routeForm.paths,
       region_x: routeForm.region_x,
       region_y: routeForm.region_y,
       region_w: routeForm.region_w,
@@ -370,24 +411,25 @@ export function AdminScreen() {
     setIsDrawing(false);
 
     if (rawPath.length < 3) {
-      drawPreview([]);
+      drawPreview();
       showFeedback("Draw a closed shape around the route.");
       return;
     }
 
     const simplifiedPath = simplifyRoutePath(rawPath, 40);
-    const bounds = getBoundingBoxFromPath(simplifiedPath);
-
-    setRouteForm((current) => ({
-      ...current,
-      path: simplifiedPath,
-      ...bounds,
-    }));
+    setRouteForm((current) => {
+      const nextPaths = [...current.paths, simplifiedPath];
+      return {
+        ...current,
+        paths: nextPaths,
+        ...getDraftBounds(nextPaths),
+      };
+    });
   }, [drawPreview, showFeedback]);
 
   useEffect(() => {
     drawPreview();
-  }, [drawPreview, routeForm.path]);
+  }, [drawPreview, routeForm.paths]);
 
   const handleCanvasPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.pointerType === "mouse" && event.button !== 0) {
@@ -405,7 +447,6 @@ export function AdminScreen() {
     drawingPointerIdRef.current = event.pointerId;
     livePathRef.current = [point];
     setIsDrawing(true);
-    setRouteForm((current) => ({ ...current, path: null }));
     drawPreview([point]);
   };
 
@@ -466,8 +507,30 @@ export function AdminScreen() {
     livePathRef.current = [];
     drawingPointerIdRef.current = null;
     setIsDrawing(false);
-    drawPreview([]);
+    drawPreview();
   };
+
+  if (!isAdmin) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#1a1a1f] px-6">
+        <div className="w-full max-w-sm rounded-2xl border border-[#333340] bg-[#232329] p-6 text-center">
+          <h1 className="text-[20px] text-white" style={{ fontWeight: 700 }}>
+            Admin Only
+          </h1>
+          <p className="mt-2 text-[14px] text-[#8a8a96]">
+            This screen is only available to the configured admin account.
+          </p>
+          <button
+            onClick={() => navigate("/profile")}
+            className="mt-5 w-full rounded-xl bg-[#a855f7] py-3 text-[14px] text-white"
+            style={{ fontWeight: 600 }}
+          >
+            Back to Profile
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -542,7 +605,7 @@ export function AdminScreen() {
                   <ImageFallback
                     src={wall.image_url}
                     alt={wall.name}
-                    className="h-16 w-16 shrink-0 rounded-lg object-cover"
+                    className="h-16 w-16 shrink-0 rounded-lg bg-[#19191f] object-contain p-1"
                   />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[15px] text-white" style={{ fontWeight: 600 }}>
@@ -590,7 +653,7 @@ export function AdminScreen() {
             />
             {imagePreview ? (
               <div className="relative overflow-hidden rounded-xl">
-                <img src={imagePreview} alt="Preview" className="h-48 w-full object-cover" />
+                <img src={imagePreview} alt="Preview" className="h-48 w-full bg-[#19191f] object-contain" />
                 <button
                   onClick={() => {
                     setImageFile(null);
@@ -669,7 +732,11 @@ export function AdminScreen() {
       {view === "wall-routes" && selectedWall && (
         <div className="px-5">
           <div className="mb-4 overflow-hidden rounded-xl">
-            <ImageFallback src={selectedWall.image_url} alt={selectedWall.name} className="h-36 w-full object-cover" />
+            <ImageFallback
+              src={selectedWall.image_url}
+              alt={selectedWall.name}
+              className="h-36 w-full bg-[#19191f] object-contain"
+            />
           </div>
 
           <button
@@ -707,7 +774,7 @@ export function AdminScreen() {
                       {route.name || "Unnamed"}
                     </p>
                     <p className="text-[11px] text-[#8a8a96]">
-                      {route.setter || "No setter"} · {route.color} · {route.path?.length || 0} pts
+                      {route.setter || "No setter"} · {route.color} · {normalizeStoredRoutePath(route.path).length} regions
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
@@ -745,50 +812,80 @@ export function AdminScreen() {
                   Draw directly on the wall photo
                 </p>
                 <p className="mt-1 text-[12px] text-[#8a8a96]">
-                  Use touch or Apple Pencil. The shape is simplified before saving and the existing tap box fallback stays intact.
+                  Use touch or Apple Pencil. Each new drawing is added to the same route, so you can outline multiple sections before saving.
                 </p>
               </div>
-              {routeForm.path && (
-                <button
-                  onClick={resetRouteDraft}
-                  className="flex items-center gap-1 rounded-lg bg-[#2a2a32] px-3 py-2 text-[12px] text-white"
-                  style={{ fontWeight: 500 }}
-                >
-                  <RotateCcw size={14} /> Clear
-                </button>
-              )}
-            </div>
-
-            <div className="relative overflow-hidden rounded-xl bg-[#111115]">
-              <ImageFallback
-                ref={wallImageRef}
-                src={selectedWall.image_url}
-                alt={selectedWall.name}
-                className="block w-full select-none object-contain"
-                draggable={false}
-                onLoad={() => drawPreview()}
-              />
-              <canvas
-                ref={canvasRef}
-                className="absolute inset-0 h-full w-full"
-                style={{ touchAction: "none" }}
-                onPointerDown={handleCanvasPointerDown}
-                onPointerMove={handleCanvasPointerMove}
-                onPointerUp={handleCanvasPointerUp}
-                onPointerCancel={handleCanvasPointerCancel}
-              />
-
-              {!routeForm.path && !isDrawing && (
-                <div className="pointer-events-none absolute inset-x-4 bottom-4 rounded-xl bg-black/55 px-4 py-2 text-center backdrop-blur-sm">
-                  <span className="text-[12px] text-white/90" style={{ fontWeight: 500 }}>
-                    Start drawing around the route area
-                  </span>
+              {routeForm.paths.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={undoLastRoutePath}
+                    className="flex items-center gap-1 rounded-lg bg-[#2a2a32] px-3 py-2 text-[12px] text-white"
+                    style={{ fontWeight: 500 }}
+                  >
+                    <X size={14} /> Undo Last
+                  </button>
+                  <button
+                    onClick={resetRouteDraft}
+                    className="flex items-center gap-1 rounded-lg bg-[#2a2a32] px-3 py-2 text-[12px] text-white"
+                    style={{ fontWeight: 500 }}
+                  >
+                    <RotateCcw size={14} /> Clear All
+                  </button>
                 </div>
               )}
             </div>
+
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <span className="text-[12px] uppercase tracking-wider text-[#8a8a96]">
+                Canvas Zoom
+              </span>
+              <span className="text-[12px] text-white">{Math.round(drawScale * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={3}
+              step={0.1}
+              value={drawScale}
+              onChange={(event) => setDrawScale(Number(event.target.value))}
+              className="mb-4 w-full accent-[#a855f7]"
+            />
+
+            <div className="overflow-auto rounded-xl bg-[#111115]">
+              <div
+                className="relative"
+                style={{ width: `${Math.max(drawScale * 100, 100)}%` }}
+              >
+                <ImageFallback
+                  ref={wallImageRef}
+                  src={selectedWall.image_url}
+                  alt={selectedWall.name}
+                  className="block w-full select-none object-contain"
+                  draggable={false}
+                  onLoad={() => drawPreview()}
+                />
+                <canvas
+                  ref={canvasRef}
+                  className="absolute inset-0 h-full w-full"
+                  style={{ touchAction: "none" }}
+                  onPointerDown={handleCanvasPointerDown}
+                  onPointerMove={handleCanvasPointerMove}
+                  onPointerUp={handleCanvasPointerUp}
+                  onPointerCancel={handleCanvasPointerCancel}
+                />
+
+                {routeForm.paths.length === 0 && !isDrawing && (
+                  <div className="pointer-events-none absolute inset-x-4 bottom-4 rounded-xl bg-black/55 px-4 py-2 text-center backdrop-blur-sm">
+                    <span className="text-[12px] text-white/90" style={{ fontWeight: 500 }}>
+                      Start drawing around the route area
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
-          {routeForm.path && (
+          {routeForm.paths.length > 0 && (
             <>
               <div className="rounded-2xl border border-[#333340] bg-[#232329] p-4">
                 <div className="mb-3 flex items-center justify-between">
@@ -796,7 +893,7 @@ export function AdminScreen() {
                     Route Details
                   </span>
                   <span className="rounded-full bg-[#2a2a32] px-2.5 py-1 text-[11px] text-white">
-                    {routeForm.path.length} points
+                    {routeForm.paths.length} regions · {totalDraftPoints} points
                   </span>
                 </div>
 
